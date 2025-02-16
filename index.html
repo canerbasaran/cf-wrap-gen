@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Cloudflare Warp WireGuard Config Generator </title>
+</head>
+
+<body>
+  <h1>Cloudflare Warp WireGuard Config Generator </h1>
+  <button id="generateButton">Generate Config</button>
+  <pre id="configOutput"></pre>
+
+  <script>
+    const base64Encode = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+    const randBytes = len => {
+      const buf = new Uint8Array(len);
+      return (window.crypto && window.crypto.getRandomValues) ? window.crypto.getRandomValues(buf) : buf.map(() => Math.floor(Math.random() * 256));
+    };
+    const clamp = secret => (secret[0] &= 248, secret[31] = (secret[31] & 127) | 64, secret);
+    const genStr = len => [...Array(len)].map(() => Math.floor(Math.random() * 36).toString(36)).join('');
+
+    const generate = async () => {
+      try {
+        const key = clamp(randBytes(32));
+        return { privateKey: base64Encode(key.buffer), publicKey: base64Encode(randBytes(32).buffer) };
+      } catch (err) { console.error("KeyGen Error:", err); throw err; }
+    };
+
+    const api = async (url, opts) => {
+      const res = await fetch(`https://proxy.cors.sh/${url}`, opts);
+      return await res.json();
+    };
+
+    const register = async ({ publicKey }) => {
+      const install_id = genStr(11);
+      const body = { key: publicKey || `${genStr(43)}=`, install_id, fcm_token: `${install_id}:APA91b${genStr(134)}`, referrer: '', warp_enabled: true, tos: new Date().toISOString().replace('Z', '+08:00'), model: 'Xiaomi POCO X2', type: 'Android', locale: 'en_US' };
+      return api('https://api.cloudflareclient.com/v0a977/reg', { method: 'POST', headers: { 'User-Agent': 'okhttp/3.12.1', 'Content-Type': 'application/json; charset=UTF-8' }, body: JSON.stringify(body) });
+    };
+
+    const info = async ({ id, token }) => api(`https://api.cloudflareclient.com/v0a977/reg/${id}`, { method: 'GET', headers: { 'User-Agent': 'okhttp/3.12.1', Authorization: `Bearer ${token}` } });
+
+    const conf = ({ privateKey, config }) => `
+[Interface]
+PrivateKey = ${privateKey}
+Address = ${config.interface.addresses.v4}
+Address = ${config.interface.addresses.v6}
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = ${config.peers[0].public_key}
+Endpoint = ${config.peers[0].endpoint.host}
+AllowedIPs = 0.0.0.0/0
+AllowedIPs = ::/0`.slice(1);
+
+    document.getElementById('generateButton').addEventListener('click', async () => {
+      try {
+        const keys = await generate();
+        const data = await register(keys);
+        const combined = Object.assign({}, keys, data, await info(data));
+        const config = conf(combined);
+        document.getElementById('configOutput').textContent = config;
+        const blob = new Blob([config], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        Object.assign(document.createElement('a'), { href: url, download: 'warp.conf' }).click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error("Config Error:", err);
+        document.getElementById('configOutput').textContent = "Error! See console.";
+      }
+    });
+  </script>
+</body>
+
+</html>
